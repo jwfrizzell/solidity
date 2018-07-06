@@ -6,22 +6,17 @@ contract BookStore {
     string public name;
     string public ipfsStoreImageAddress;
     string public email;
-    uint public inventoryCount;
     
     struct Order {
         uint itemNumber;
         uint quantity;
-        string shipAddr1;
-        string shipAddr2;
-        string shipCity;
-        string shipState;
-        string shipCountry;
-        string shipZip;
+        string shippingInfo;
         string shipEmail;
         string createdDate;
         string shipDate;
         string transactionNumber;
         uint totalAmount;
+        uint msgValue;
     }
     
     struct Item {
@@ -33,7 +28,7 @@ contract BookStore {
     }
     
     mapping(uint => Order) orders;
-    Item[] items;
+    mapping(uint => Item) items;
     
     modifier restricted() {
         require(msg.sender == owner);
@@ -42,109 +37,139 @@ contract BookStore {
     
     constructor(address _storeOwner, string _nameOfStore, string _storeImage, string _storeEmail) public {
         require(_storeOwner != address(0));
+        require(_storeOwner == msg.sender);
+        
         bytes memory storeEMail = bytes(_storeEmail);
         require(storeEMail.length != 0);
        
-        
         owner = _storeOwner;
         name = _nameOfStore;
         ipfsStoreImageAddress = _storeImage;
         email = _storeEmail;
-        inventoryCount = 0;
     }
     
     function getBalance() public view returns (uint){
         return address(this).balance;
     }
     
-    function getStoreDetails() public constant returns(string _name,string _email,uint _balance){
-        return (name, email, address(this).balance);
+    function getStoreDetails() public view returns(
+        string _name,
+        string _email,
+        uint _balance){
+            
+        return (
+                name, 
+                email, 
+                address(this).balance
+               );
     }
     
     /* ------------------------------------ */
     /*             Items                    */
     /* ------------------------------------ */
     
-    function addItemInventory(uint number, string ipfsItemImageAddress, string description, uint price, uint quantity) public restricted {
-        require(number > 0);
+    function addItemInventory(string ipfsItemImageAddress, string description, uint price, uint quantity) public restricted returns(uint64) {
         require(price > 0);
         require(quantity > 0);
         
+        uint64 newItemNumber = generateUniqueNumber();
+        
         Item memory item = Item({
-            number: number,
+            number: newItemNumber,
             ipfsItemImageAddress: ipfsItemImageAddress,
             description: description,
             price: price,
             quantity: quantity
         });
         
-        items.push(item);
+        items[newItemNumber] = item;
+        return newItemNumber;
     }
     
-    function getItemIndex(uint itemNumber) private view returns(int16){
-        for(uint i = 0; i < items.length;i++){
-            if(items[i].number == itemNumber){
-                return int16(i);
-            }
-        }
-        return -1;
+    function adjustInventoryForItem(uint itemNumber, uint qtyToRemove) private {
+        items[itemNumber].quantity = qtyToRemove;
     }
     
-    function getItem(uint index) public view returns(uint price, string description, uint quantity){
-        return (items[index].price, items[index].description,items[index].quantity);
+    function removeItemFromInventory(uint itemNumber)public restricted{
+        delete items[itemNumber];
+    }
+    
+    function getItem(uint index) public view returns(
+        uint price, 
+        string description, 
+        uint quantity){
+            
+        return (
+                items[index].price, 
+                items[index].description,
+                items[index].quantity
+               );
     }
     
     /* ------------------------------------ */
     /*             Orders                   */
     /* ------------------------------------ */
-    function placeOrder(uint itemNumber, uint quantity, string addr1, string addr2, string city, string state, string custEmail, 
-        string zip, string country, string createdDate) public payable returns(uint16){
-        require(items.length > 0 && itemNumber > 0 && quantity > 0);
+    function placeOrder(uint itemNumber, uint quantity, string shippingInfo, string custEmail, string createdDate) public payable returns(uint64){
+        require(itemNumber > 0 && quantity > 0);
         
-        require(bytes(addr1).length > 0 && bytes(city).length > 0 && bytes(state).length > 0 &&
-            bytes(zip).length > 0 && bytes(country).length > 0);
+        require(bytes(shippingInfo).length > 0);
             
-        int16 itemIndex = getItemIndex(itemNumber);
-        require(itemIndex >= 0);
-        require(items[uint(itemIndex)].quantity > 0 && items[uint(itemIndex)].quantity >= quantity);
-        require(msg.value >= (items[uint(itemIndex)].price * quantity));
+        Item memory item = items[itemNumber];
+        require(item.number >= 0 && item.quantity > 0 && item.quantity >= quantity);
+        require(msg.value >= (item.price * quantity));
         
         Order memory order = Order({
             itemNumber: itemNumber,
             quantity: quantity,
-            shipAddr1: addr1,
-            shipAddr2: addr2,
-            shipCity: city,
-            shipState: state,
-            shipZip: zip,
-            shipCountry: country,
+            shippingInfo: shippingInfo,
             shipEmail: custEmail,
             createdDate: createdDate,
             shipDate: "",
             transactionNumber: "",
-            totalAmount: (items[uint(itemIndex)].price * quantity)
+            totalAmount: (item.price * quantity),
+            msgValue: msg.value
         });
         
-        uint orderNumber = generateOrderNumber();
+        uint64 orderNumber = generateUniqueNumber();
         orders[orderNumber] = order;
-        items[uint(itemIndex)].quantity  = items[uint(itemIndex)].quantity - quantity;
-        return uint16(orderNumber);
+        adjustInventoryForItem(itemNumber, item.quantity - quantity);
+        return orderNumber;
     }
     
-    function getOrderDetails(uint orderNumber) public view returns( uint itemNumber, uint quantity, string createdDate, string shipDate, string transactionNumber, uint totalAmount){
+    function getOrderDetails(uint orderNumber) public view returns( 
+        uint itemNumber, 
+        uint quantity, 
+        string createdDate, 
+        string shipDate, 
+        string transactionNumber, 
+        uint totalAmount,
+        string shippingInfo){
         
-        return (orders[orderNumber].itemNumber, orders[orderNumber].quantity,orders[orderNumber].createdDate, orders[orderNumber].shipDate,orders[orderNumber].transactionNumber,
-            orders[orderNumber].totalAmount);
+        return (
+                orders[orderNumber].itemNumber, 
+                orders[orderNumber].quantity,
+                orders[orderNumber].createdDate, 
+                orders[orderNumber].shipDate,
+                orders[orderNumber].transactionNumber,
+                orders[orderNumber].totalAmount,
+                orders[orderNumber].shippingInfo
+               );
     }
     
-    function getOrderShipInfo(uint orderNumber) public view returns(string shipAddr1,string shipAddr2, string shipCity,
-        string shipState, string shipCountry, string shipZip, string shipEmail){
-            
-            return(orders[orderNumber].shipAddr1, orders[orderNumber].shipAddr2, orders[orderNumber].shipCity, orders[orderNumber].shipState, 
-                orders[orderNumber].shipCountry, orders[orderNumber].shipZip, orders[orderNumber].shipEmail);
+    function setTracking(uint orderNumber, string trackingNumber, string shippingDate)public restricted {
+        orders[orderNumber].transactionNumber = trackingNumber;
+        orders[orderNumber].shipDate = shippingDate;
     }
     
-    function generateOrderNumber() private view returns (uint) {
-        return uint(keccak256(abi.encodePacked(now, block.difficulty, msg.sender)));
+    function removeOrder(uint orderNumber)public restricted {
+        delete orders[orderNumber];
     }
+    
+    /* ------------------------------------ */
+    /*             Helper                   */
+    /* ------------------------------------ */
+    function generateUniqueNumber() private view returns (uint64) {
+        return uint64(uint(keccak256(abi.encodePacked(now, block.difficulty, msg.sender))));
+    }
+    
 }
